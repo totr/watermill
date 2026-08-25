@@ -1,4 +1,4 @@
-// Sources for https://watermill.io/docs/getting-started/
+// Sources for https://watermill.io/learn/getting-started/
 package main
 
 import (
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
-	"github.com/ThreeDotsLabs/watermill-googlecloud/pkg/googlecloud"
+	"github.com/ThreeDotsLabs/watermill-googlecloud/v2/pkg/googlecloud"
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 

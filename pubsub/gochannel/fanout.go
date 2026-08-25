@@ -10,8 +10,8 @@ import (
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 
-// FanOut is a component that receives messages from the subscriber and passes them
-// to all publishers. In effect, messages are "multiplied".
+// FanOut is a component that receives messages from a topic and passes them
+// to all subscribers. In effect, messages are "multiplied".
 //
 // A typical use case for using FanOut is having one external subscription and multiple workers
 // inside the process.
@@ -100,6 +100,10 @@ func (f *FanOut) Running() chan struct{} {
 	return f.internalRouter.Running()
 }
 
+func (f *FanOut) IsClosed() bool {
+	return f.internalRouter.IsClosed()
+}
+
 // Subscribe starts subscription to the FanOut's internal Pub/Sub.
 func (f *FanOut) Subscribe(ctx context.Context, topic string) (<-chan *message.Message, error) {
 	return f.internalPubSub.Subscribe(ctx, topic)
@@ -107,5 +111,14 @@ func (f *FanOut) Subscribe(ctx context.Context, topic string) (<-chan *message.M
 
 // Close closes the FanOut's internal Pub/Sub.
 func (f *FanOut) Close() error {
-	return f.internalPubSub.Close()
+	var err error
+
+	if routerCloseErr := f.internalRouter.Close(); routerCloseErr != nil {
+		err = errors.Join(err, routerCloseErr)
+	}
+	if internalPubSubCloseErr := f.internalPubSub.Close(); internalPubSubCloseErr != nil {
+		err = errors.Join(err, internalPubSubCloseErr)
+	}
+
+	return err
 }

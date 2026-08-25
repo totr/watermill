@@ -1,4 +1,4 @@
-// Sources for https://watermill.io/docs/getting-started/
+// Sources for https://watermill.io/learn/getting-started/
 package main
 
 import (
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill"
-	"github.com/ThreeDotsLabs/watermill-amqp/v2/pkg/amqp"
+	"github.com/ThreeDotsLabs/watermill-amqp/v3/pkg/amqp"
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 

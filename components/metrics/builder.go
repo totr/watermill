@@ -7,12 +7,27 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-func NewPrometheusMetricsBuilder(prometheusRegistry prometheus.Registerer, namespace string, subsystem string) PrometheusMetricsBuilder {
-	return PrometheusMetricsBuilder{
-		Namespace:          namespace,
-		Subsystem:          subsystem,
+type PrometheusMetricsBuilderConfig struct {
+	Namespace        string
+	Subsystem        string
+	AdditionalLabels []MetricLabel
+}
+
+func NewPrometheusMetricsBuilderWithConfig(prometheusRegistry prometheus.Registerer, config PrometheusMetricsBuilderConfig) PrometheusMetricsBuilder {
+	builder := PrometheusMetricsBuilder{
+		Namespace:          config.Namespace,
+		Subsystem:          config.Subsystem,
 		PrometheusRegistry: prometheusRegistry,
+		additionalLabels:   config.AdditionalLabels,
 	}
+	return builder
+}
+
+func NewPrometheusMetricsBuilder(prometheusRegistry prometheus.Registerer, namespace string, subsystem string) PrometheusMetricsBuilder {
+	return NewPrometheusMetricsBuilderWithConfig(prometheusRegistry, PrometheusMetricsBuilderConfig{
+		Namespace: namespace,
+		Subsystem: subsystem,
+	})
 }
 
 // PrometheusMetricsBuilder provides methods to decorate publishers, subscribers and handlers.
@@ -22,10 +37,18 @@ type PrometheusMetricsBuilder struct {
 
 	Namespace string
 	Subsystem string
+	// PublishBuckets defines the histogram buckets for publish time histogram, defaulted if nil.
+	PublishBuckets []float64
+	// HandlerBuckets defines the histogram buckets for handle execution time histogram, defaulted to watermill's default.
+	HandlerBuckets []float64
+
+	additionalLabels []MetricLabel
 }
 
 // AddPrometheusRouterMetrics is a convenience function that acts on the message router to add the metrics middleware
 // to all its handlers. The handlers' publishers and subscribers are also decorated.
+// The default buckets are used for the handler execution time histogram (use your own provisioning
+// with NewRouterMiddlewareWithConfig if needed).
 func (b PrometheusMetricsBuilder) AddPrometheusRouterMetrics(r *message.Router) {
 	r.AddPublisherDecorators(b.DecoratePublisher)
 	r.AddSubscriberDecorators(b.DecorateSubscriber)
@@ -36,8 +59,9 @@ func (b PrometheusMetricsBuilder) AddPrometheusRouterMetrics(r *message.Router) 
 func (b PrometheusMetricsBuilder) DecoratePublisher(pub message.Publisher) (message.Publisher, error) {
 	var err error
 	d := PublisherPrometheusMetricsDecorator{
-		pub:           pub,
-		publisherName: internal.StructName(pub),
+		pub:              pub,
+		publisherName:    internal.StructName(pub),
+		additionalLabels: b.additionalLabels,
 	}
 
 	d.publishTimeSeconds, err = b.registerHistogramVec(prometheus.NewHistogramVec(
@@ -46,8 +70,9 @@ func (b PrometheusMetricsBuilder) DecoratePublisher(pub message.Publisher) (mess
 			Subsystem: b.Subsystem,
 			Name:      "publish_time_seconds",
 			Help:      "The time that a publishing attempt (success or not) took in seconds",
+			Buckets:   b.PublishBuckets,
 		},
-		publisherLabelKeys,
+		toLabelsSlice(publisherLabelKeys, b.additionalLabels),
 	))
 	if err != nil {
 		return nil, errors.Wrap(err, "could not register publish time metric")
@@ -59,8 +84,9 @@ func (b PrometheusMetricsBuilder) DecoratePublisher(pub message.Publisher) (mess
 func (b PrometheusMetricsBuilder) DecorateSubscriber(sub message.Subscriber) (message.Subscriber, error) {
 	var err error
 	d := &SubscriberPrometheusMetricsDecorator{
-		closing:        make(chan struct{}),
-		subscriberName: internal.StructName(sub),
+		closing:          make(chan struct{}),
+		subscriberName:   internal.StructName(sub),
+		additionalLabels: b.additionalLabels,
 	}
 
 	d.subscriberMessagesReceivedTotal, err = b.registerCounterVec(prometheus.NewCounterVec(
@@ -70,7 +96,7 @@ func (b PrometheusMetricsBuilder) DecorateSubscriber(sub message.Subscriber) (me
 			Name:      "subscriber_messages_received_total",
 			Help:      "The total number of messages received by the subscriber",
 		},
-		append(subscriberLabelKeys, labelAcked),
+		toLabelsSlice(append(subscriberLabelKeys, labelAcked), b.additionalLabels),
 	))
 	if err != nil {
 		return nil, errors.Wrap(err, "could not register time to ack metric")

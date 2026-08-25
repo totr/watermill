@@ -9,12 +9,22 @@ import (
 	"github.com/pkg/errors"
 )
 
-const defaultForwarderTopic = "forwarder_topic"
+const (
+	defaultForwarderTopic = "forwarder_topic"
+	defaultHandlerName    = "events_forwarder"
+)
 
 type Config struct {
 	// ForwarderTopic is a topic on which the forwarder will be listening to enveloped messages to forward.
 	// Defaults to `forwarder_topic`.
 	ForwarderTopic string
+
+	// HandlerName is the name of the forwarder's handler registered in the router.
+	// Defaults to `events_forwarder`.
+	//
+	// Handler names must be unique within a router, so it needs to be set explicitly
+	// if you want to run multiple forwarders on the same router.
+	HandlerName string
 
 	// Middlewares are used to decorate forwarder's handler function.
 	Middlewares []message.HandlerMiddleware
@@ -24,6 +34,17 @@ type Config struct {
 
 	// AckWhenCannotUnwrap enables acking of messages which cannot be unwrapped from an envelope.
 	AckWhenCannotUnwrap bool
+
+	// Router is a router used by the forwarder.
+	// If not provided, a new router will be created.
+	//
+	// If router is provided, it's not necessary to call `Forwarder.Run()` if the router is started with `router.Run()`.
+	Router *message.Router
+
+	// Marshaler is used to deserialize envelopes received on ForwarderTopic.
+	// It must match the Marshaler used by the decorated Publisher.
+	// Defaults to DefaultMarshaler, which uses encoding/json.
+	Marshaler Marshaler
 }
 
 func (c *Config) setDefaults() {
@@ -33,11 +54,20 @@ func (c *Config) setDefaults() {
 	if c.ForwarderTopic == "" {
 		c.ForwarderTopic = defaultForwarderTopic
 	}
+	if c.HandlerName == "" {
+		c.HandlerName = defaultHandlerName
+	}
+	if c.Marshaler == nil {
+		c.Marshaler = DefaultMarshaler{}
+	}
 }
 
 func (c *Config) Validate() error {
 	if c.ForwarderTopic == "" {
 		return errors.New("empty forwarder topic")
+	}
+	if c.HandlerName == "" {
+		return errors.New("empty handler name")
 	}
 
 	return nil
@@ -58,7 +88,12 @@ type Forwarder struct {
 //
 // Note: Keep in mind that by default the forwarder will nack all messages which weren't sent using a decorated publisher.
 // You can change this behavior by passing a middleware which will ack them instead.
-func NewForwarder(subscriberIn message.Subscriber, publisherOut message.Publisher, logger watermill.LoggerAdapter, config Config) (*Forwarder, error) {
+func NewForwarder(
+	subscriberIn message.Subscriber,
+	publisherOut message.Publisher,
+	logger watermill.LoggerAdapter,
+	config Config,
+) (*Forwarder, error) {
 	config.setDefaults()
 
 	routerConfig := message.RouterConfig{CloseTimeout: config.CloseTimeout}
@@ -66,21 +101,27 @@ func NewForwarder(subscriberIn message.Subscriber, publisherOut message.Publishe
 		return nil, errors.Wrap(err, "invalid router config")
 	}
 
-	router, err := message.NewRouter(routerConfig, logger)
-	if err != nil {
-		return nil, errors.Wrap(err, "cannot create a router")
+	var router *message.Router
+	if config.Router != nil {
+		router = config.Router
+	} else {
+		var err error
+		router, err = message.NewRouter(routerConfig, logger)
+		if err != nil {
+			return nil, errors.Wrap(err, "cannot create a router")
+		}
 	}
 
 	f := &Forwarder{router, publisherOut, logger, config}
 
-	router.AddNoPublisherHandler(
-		"events_forwarder",
+	handler := router.AddConsumerHandler(
+		config.HandlerName,
 		config.ForwarderTopic,
 		subscriberIn,
 		f.forwardMessage,
 	)
 
-	router.AddMiddleware(config.Middlewares...)
+	handler.AddMiddleware(config.Middlewares...)
 
 	return f, nil
 }
@@ -105,7 +146,7 @@ func (f *Forwarder) Running() chan struct{} {
 }
 
 func (f *Forwarder) forwardMessage(msg *message.Message) error {
-	destTopic, unwrappedMsg, err := unwrapMessageFromEnvelope(msg)
+	destTopic, unwrappedMsg, err := unwrapMessageFromEnvelope(msg, f.config.Marshaler)
 	if err != nil {
 		f.logger.Error("Could not unwrap a message from an envelope", err, watermill.LogFields{
 			"uuid":     msg.UUID,

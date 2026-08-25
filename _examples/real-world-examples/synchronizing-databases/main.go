@@ -9,12 +9,12 @@ import (
 	"log"
 	"time"
 
-	"github.com/brianvoe/gofakeit"
+	"github.com/brianvoe/gofakeit/v6"
 	driver "github.com/go-sql-driver/mysql"
 	_ "github.com/lib/pq"
 
 	"github.com/ThreeDotsLabs/watermill"
-	"github.com/ThreeDotsLabs/watermill-sql/pkg/sql"
+	"github.com/ThreeDotsLabs/watermill-sql/v4/pkg/sql"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/message/router/middleware"
 	"github.com/ThreeDotsLabs/watermill/message/router/plugin"
@@ -123,7 +123,7 @@ func createPostgresConnection() *stdSQL.DB {
 
 func createSubscriber(db *stdSQL.DB) message.Subscriber {
 	sub, err := sql.NewSubscriber(
-		db,
+		sql.BeginnerFromStdSQL(db),
 		sql.SubscriberConfig{
 			SchemaAdapter:    mysqlSchemaAdapter{},
 			OffsetsAdapter:   sql.DefaultMySQLOffsetsAdapter{},
@@ -140,7 +140,7 @@ func createSubscriber(db *stdSQL.DB) message.Subscriber {
 
 func createPublisher(db *stdSQL.DB) message.Publisher {
 	pub, err := sql.NewPublisher(
-		db,
+		sql.BeginnerFromStdSQL(db),
 		sql.PublisherConfig{
 			SchemaAdapter:        postgresSchemaAdapter{},
 			AutoInitializeSchema: true,
@@ -156,7 +156,7 @@ func createPublisher(db *stdSQL.DB) message.Publisher {
 
 func simulateEvents(db *stdSQL.DB) {
 	pub, err := sql.NewPublisher(
-		db,
+		sql.BeginnerFromStdSQL(db),
 		sql.PublisherConfig{
 			SchemaAdapter:        mysqlSchemaAdapter{},
 			AutoInitializeSchema: true,

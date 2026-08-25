@@ -1,4 +1,4 @@
-// Sources for https://watermill.io/docs/getting-started/
+// Sources for https://watermill.io/learn/getting-started/
 package main
 
 import (
@@ -56,6 +56,7 @@ func main() {
 	go publishMessages(pubSub)
 
 	// AddHandler returns a handler which can be used to add handler level middleware
+	// or to stop handler.
 	handler := router.AddHandler(
 		"struct_handler",          // handler name, must be unique
 		"incoming_messages_topic", // topic from which we will read events
@@ -76,7 +77,7 @@ func main() {
 	})
 
 	// just for debug, we are printing all messages received on `incoming_messages_topic`
-	router.AddNoPublisherHandler(
+	router.AddConsumerHandler(
 		"print_incoming_messages",
 		"incoming_messages_topic",
 		pubSub,
@@ -84,7 +85,7 @@ func main() {
 	)
 
 	// just for debug, we are printing all events sent to `outgoing_messages_topic`
-	router.AddNoPublisherHandler(
+	router.AddConsumerHandler(
 		"print_outgoing_messages",
 		"outgoing_messages_topic",
 		pubSub,

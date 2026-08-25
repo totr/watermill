@@ -5,13 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ThreeDotsLabs/watermill"
-
+	"github.com/cenkalti/backoff/v5"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/assert"
 
+	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/message"
-	"github.com/pkg/errors"
-
 	"github.com/ThreeDotsLabs/watermill/message/router/middleware"
 )
 
@@ -74,6 +73,68 @@ func TestRetry_retry_hook(t *testing.T) {
 	_, _ = h(message.NewMessage("1", nil))
 
 	assert.EqualValues(t, []int{1, 2}, retriesFromHook)
+}
+
+func TestRetry_retries_exhausted_hook(t *testing.T) {
+	var exhaustedParams middleware.RetriesExhaustedParams
+
+	handlerErr := errors.New("foo")
+
+	retry := middleware.Retry{
+		MaxRetries: 2,
+		OnRetriesExhausted: func(params middleware.RetriesExhaustedParams) {
+			exhaustedParams = params
+		},
+	}
+
+	h := retry.Middleware(func(msg *message.Message) (messages []*message.Message, e error) {
+		return nil, handlerErr
+	})
+	_, _ = h(message.NewMessage("1", nil))
+
+	assert.ErrorIs(t, exhaustedParams.Err, handlerErr)
+	// With MaxRetries=2, there are 3 total attempts (1 initial + 2 retries)
+	// retryNum is incremented after each attempt, so it's 3 when exhausted
+	assert.Equal(t, 3, exhaustedParams.RetryNum)
+}
+
+func TestRetry_retries_exhausted_hook_not_called_on_success(t *testing.T) {
+	var hookCalled bool
+
+	retry := middleware.Retry{
+		MaxRetries: 2,
+		OnRetriesExhausted: func(params middleware.RetriesExhaustedParams) {
+			hookCalled = true
+		},
+	}
+
+	h := retry.Middleware(func(msg *message.Message) (messages []*message.Message, e error) {
+		return nil, nil
+	})
+	_, _ = h(message.NewMessage("1", nil))
+
+	assert.False(t, hookCalled, "OnRetriesExhausted should not be called on success")
+}
+
+func TestRetry_retries_exhausted_hook_not_called_when_should_retry_returns_false(t *testing.T) {
+	var hookCalled bool
+
+	retry := middleware.Retry{
+		MaxRetries: 5,
+		ShouldRetry: func(params middleware.RetryParams) bool {
+			return false
+		},
+		OnRetriesExhausted: func(params middleware.RetriesExhaustedParams) {
+			hookCalled = true
+		},
+	}
+
+	h := retry.Middleware(func(msg *message.Message) (messages []*message.Message, e error) {
+		return nil, errors.New("foo")
+	})
+	_, _ = h(message.NewMessage("1", nil))
+
+	assert.False(t, hookCalled, "OnRetriesExhausted should not be called when ShouldRetry returns false")
 }
 
 func TestRetry_logger(t *testing.T) {
@@ -143,7 +204,8 @@ func TestRetry_ctx_cancel(t *testing.T) {
 	handlerResultReceived := <-handlerResultCh
 
 	assert.Error(t, handlerResultReceived.Err)
-	assert.Equal(t, producedMessages, handlerResultReceived.Messages)
+	// produced messages are nil since ctx is canceling the operation in the middle
+	assert.Nil(t, handlerResultReceived.Messages)
 }
 
 func TestRetry_max_elapsed(t *testing.T) {
@@ -176,6 +238,8 @@ func TestRetry_max_elapsed(t *testing.T) {
 }
 
 func TestRetry_max_interval(t *testing.T) {
+	t.Parallel()
+
 	maxRetries := 10
 	backoffTimes := make([]time.Duration, maxRetries)
 	maxInterval := time.Millisecond * 30
@@ -199,4 +263,162 @@ func TestRetry_max_interval(t *testing.T) {
 	for i, delay := range backoffTimes {
 		assert.True(t, delay <= maxInterval, "wait interval %d (%s) exceeds maxInterval (%s)", i, delay, maxInterval)
 	}
+}
+
+func TestRetry_first_run_no_delay(t *testing.T) {
+	t.Parallel()
+
+	initialInterval := time.Millisecond * 100
+	retry := middleware.Retry{
+		MaxElapsedTime:  initialInterval * 2,
+		MaxRetries:      10,
+		InitialInterval: initialInterval,
+	}
+
+	h := retry.Middleware(func(msg *message.Message) (messages []*message.Message, e error) {
+		return nil, nil
+	})
+
+	start := time.Now()
+	_, _ = h(message.NewMessage("1", nil))
+	elapsed := time.Since(start)
+
+	assert.True(t, elapsed < initialInterval, "first retry should not wait, elapsed: %s", elapsed)
+}
+
+func TestRetry_should_retry(t *testing.T) {
+	errToSkip := errors.New("this should be skipped")
+
+	retry := middleware.Retry{
+		MaxRetries: 5,
+		ShouldRetry: func(params middleware.RetryParams) bool {
+			return !errors.Is(params.Err, errToSkip)
+		},
+	}
+
+	runCount := 0
+
+	h := retry.Middleware(func(msg *message.Message) (messages []*message.Message, e error) {
+		runCount++
+		return nil, errToSkip
+	})
+
+	handlerMessages, handlerErr := h(message.NewMessage("1", nil))
+
+	assert.Equal(t, 1, runCount)
+	assert.Nil(t, handlerMessages)
+	assert.ErrorIs(t, handlerErr, errToSkip)
+
+	// to not create any dependency on backoff package
+	var backoffPermanentError *backoff.PermanentError
+	assert.False(t, errors.As(handlerErr, &backoffPermanentError))
+}
+
+// Test that the ShouldRetry function is called on each retry attempt.
+// Under the hood, the second attempt goes over a bit different code path,
+// so we want to make sure that it works consistently.
+func TestRetry_should_retry_second_attempt(t *testing.T) {
+	errToSkip := errors.New("this should be skipped")
+
+	retry := middleware.Retry{
+		MaxRetries: 5,
+		ShouldRetry: func(params middleware.RetryParams) bool {
+			return !errors.Is(params.Err, errToSkip)
+		},
+	}
+
+	runCount := 0
+
+	h := retry.Middleware(func(msg *message.Message) (messages []*message.Message, e error) {
+		runCount++
+
+		if runCount == 1 {
+			return nil, errors.New("some other error")
+		} else {
+			return nil, errToSkip
+		}
+	})
+
+	handlerMessages, handlerErr := h(message.NewMessage("1", nil))
+
+	assert.Equal(t, 2, runCount)
+	assert.Nil(t, handlerMessages)
+	assert.ErrorIs(t, handlerErr, errToSkip)
+
+	// to not create any dependency on backoff package
+	var backoffPermanentError *backoff.PermanentError
+	assert.False(t, errors.As(handlerErr, &backoffPermanentError))
+}
+
+// Test that if backoff.Permanent error stops the retries.
+// For sake of potential future regressions (see Hyrum's Law).
+func TestRetry_backoff_backoff_permanent(t *testing.T) {
+	errToSkip := errors.New("this should be skipped")
+
+	retry := middleware.Retry{
+		MaxRetries: 5,
+	}
+
+	runCount := 0
+
+	h := retry.Middleware(func(msg *message.Message) (messages []*message.Message, e error) {
+		runCount++
+		return nil, backoff.Permanent(errToSkip)
+	})
+
+	handlerMessages, handlerErr := h(message.NewMessage("1", nil))
+
+	assert.Equal(t, 1, runCount)
+	assert.Nil(t, handlerMessages)
+	assert.ErrorIs(t, handlerErr, errToSkip)
+
+	// to not create any dependency on backoff package
+	var backoffPermanentError *backoff.PermanentError
+	assert.False(t, errors.As(handlerErr, &backoffPermanentError))
+}
+
+// TestRetry_uncancel_context checks scenario when context is canceled,
+// and we want to retry. More context: https://github.com/ThreeDotsLabs/watermill/issues/467
+//
+// Message is passed as a pointer, so underlying middlewares or handlers can cancel its context.
+// In this scenario, retrying is pointless because context is already canceled, so any operation
+// that relies on context will fail immediately.
+func TestRetry_uncancel_context(t *testing.T) {
+	retry := middleware.Retry{
+		MaxRetries:          5,
+		ResetContextOnRetry: true,
+	}
+
+	num := 0
+
+	var ctxCancelMiddleware = func(h message.HandlerFunc) message.HandlerFunc {
+		return func(msg *message.Message) ([]*message.Message, error) {
+			num++
+
+			ctx, cancel := context.WithCancel(msg.Context())
+			defer func() {
+				cancel()
+			}()
+
+			if num == 1 {
+				t.Log("Run 1: canceling context")
+				cancel()
+			} else {
+				t.Logf("Run %d: context is not canceled", num)
+			}
+
+			msg.SetContext(ctx)
+			return h(msg)
+		}
+	}
+
+	h := func(msg *message.Message) (messages []*message.Message, e error) {
+		return nil, msg.Context().Err()
+	}
+
+	h = ctxCancelMiddleware(h)
+	h = retry.Middleware(h)
+
+	_, handlerErr := h(message.NewMessage("1", nil))
+	assert.NoError(t, handlerErr)
 }

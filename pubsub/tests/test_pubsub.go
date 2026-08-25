@@ -15,10 +15,9 @@ import (
 	"testing"
 	"time"
 
-	internalSubscriber "github.com/ThreeDotsLabs/watermill/internal/subscriber"
-
 	"github.com/ThreeDotsLabs/watermill"
 	"github.com/ThreeDotsLabs/watermill/internal"
+	internalSubscriber "github.com/ThreeDotsLabs/watermill/internal/subscriber"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/message/subscriber"
 
@@ -27,10 +26,6 @@ import (
 )
 
 var defaultTimeout = time.Second * 15
-
-func init() {
-	rand.Seed(3)
-}
 
 // TestPubSub is a universal test suite. Every Pub/Sub implementation should pass it
 // before it's considered production ready.
@@ -110,7 +105,7 @@ type Features struct {
 	// Some Pub/Subs guarantee the order only when one subscriber is subscribed at a time.
 	GuaranteedOrderWithSingleSubscriber bool
 
-	// Persistent should be true, if messages are persistent between multiple instancees of a Pub/Sub
+	// Persistent should be true, if messages are persistent between multiple instances of a Pub/Sub
 	// (in practice, only GoChannel doesn't support that).
 	Persistent bool
 
@@ -125,6 +120,20 @@ type Features struct {
 	// NewSubscriberReceivesOldMessages should be set to true if messages are persisted even
 	// if they are already consumed (for example, like in Kafka).
 	NewSubscriberReceivesOldMessages bool
+
+	// GenerateTopicFunc overrides standard topic name generation.
+	GenerateTopicFunc func(tctx TestContext) string
+
+	// GenerateIDFunc determines which function should be used for generating test IDs, NewTestID is used by default.
+	GenerateIDFunc func() TestID
+
+	// ForceShort forces running tests in short mode.
+	// It's useful for Pub/Subs that are slow or have some limitations.
+	ForceShort bool
+
+	// ContextPreserved should be set to true if the Pub/Sub implementation preserves the context
+	// of the message when it's published and consumed.
+	ContextPreserved bool
 }
 
 // RunOnlyFastTests returns true if -short flag was provided -race was not provided.
@@ -154,9 +163,18 @@ func getTestName(testFunc interface{}) string {
 // TestID is a unique ID of a test.
 type TestID string
 
+func (t TestID) String() string {
+	return string(t)
+}
+
 // NewTestID returns a new unique TestID.
 func NewTestID() TestID {
 	return TestID(watermill.NewUUID())
+}
+
+// NewTestULID returns a new unique TestID using ULID.
+func NewTestULID() TestID {
+	return TestID(watermill.NewULID())
 }
 
 // TestContext is a collection of values that belong to a single test.
@@ -222,7 +240,7 @@ func TestPublishSubscribe(
 ) {
 	pub, sub := pubSubConstructor(t)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
@@ -236,7 +254,7 @@ func TestPublishSubscribe(
 		id := watermill.NewUUID()
 		testMetadata := watermill.NewUUID()
 
-		payload := []byte(fmt.Sprintf("%d", i))
+		payload := fmt.Appendf(nil, "%d", i)
 		msg := message.NewMessage(id, payload)
 
 		msg.Metadata.Set("test", testMetadata)
@@ -271,12 +289,12 @@ func TestConcurrentSubscribe(
 	pub, initSub := pubSubConstructor(t)
 	defer closePubSub(t, pub, initSub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 
 	messagesCount := 5000
 	subscribersCount := 50
 
-	if testing.Short() {
+	if testing.Short() || tCtx.Features.ForceShort {
 		messagesCount = 100
 		subscribersCount = 10
 	}
@@ -315,9 +333,9 @@ func TestConcurrentSubscribeMultipleTopics(
 	defer closePubSub(t, pub, sub)
 
 	messagesCount := 100
-	topicsCount := 50
+	topicsCount := 20
 
-	if testing.Short() {
+	if testing.Short() || tCtx.Features.ForceShort {
 		messagesCount = 50
 		topicsCount = 10
 	}
@@ -326,7 +344,7 @@ func TestConcurrentSubscribeMultipleTopics(
 	for i := 0; i < messagesCount; i++ {
 		id := watermill.NewUUID()
 
-		msg := message.NewMessage(id, nil)
+		msg := message.NewMessage(id, []byte("x"))
 		messagesToPublish = append(messagesToPublish, msg)
 	}
 
@@ -336,7 +354,13 @@ func TestConcurrentSubscribeMultipleTopics(
 	receivedMessagesCh := make(chan message.Messages, topicsCount)
 
 	for i := 0; i < topicsCount; i++ {
-		topicName := testTopicName(tCtx.TestID) + fmt.Sprintf("_%d", i)
+		topicName := testTopicName(tCtx) + fmt.Sprintf("-%d", i)
+
+		var messagesToPublishForTopic []*message.Message
+		for _, msg := range messagesToPublish {
+			newMsg := msg.Copy()
+			messagesToPublishForTopic = append(messagesToPublishForTopic, newMsg)
+		}
 
 		go func() {
 			defer subsWg.Done()
@@ -344,20 +368,20 @@ func TestConcurrentSubscribeMultipleTopics(
 			if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 				err := subscribeInitializer.SubscribeInitialize(topicName)
 				if err != nil {
-					t.Fatal(err)
+					t.Error(err)
 				}
 			}
 
-			err := publishWithRetry(pub, topicName, messagesToPublish...)
+			err := publishWithRetry(pub, topicName, messagesToPublishForTopic...)
 			if err != nil {
-				t.Fatal(err)
+				t.Error(err)
 			}
 
 			messages, err := sub.Subscribe(context.Background(), topicName)
 			if err != nil {
-				t.Fatal(err)
+				t.Error(err)
 			}
-			topicMessages, _ := bulkRead(tCtx, messages, len(messagesToPublish), defaultTimeout)
+			topicMessages, _ := bulkRead(tCtx, messages, len(messagesToPublishForTopic), defaultTimeout*5)
 
 			receivedMessagesCh <- topicMessages
 		}()
@@ -388,14 +412,14 @@ func TestPublishSubscribeInOrder(
 	}
 
 	messagesCount := 1000
-	if testing.Short() {
+	if testing.Short() || tCtx.Features.ForceShort {
 		messagesCount = 100
 	}
 
 	pub, initSub := pubSubConstructor(t)
 	defer closePubSub(t, pub, initSub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 
 	if subscribeInitializer, ok := initSub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
@@ -465,7 +489,7 @@ func TestResendOnError(
 	pub, sub := pubSubConstructor(t)
 	defer closePubSub(t, pub, sub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
@@ -518,7 +542,7 @@ func TestNoAck(
 	pub, sub := pubSubConstructor(t)
 	defer closePubSub(t, pub, sub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
@@ -528,7 +552,7 @@ func TestNoAck(
 		id := watermill.NewUUID()
 		log.Printf("sending %s", id)
 
-		msg := message.NewMessage(id, nil)
+		msg := message.NewMessage(id, []byte("x"))
 
 		err := publishWithRetry(pub, topicName, msg)
 		require.NoError(t, err)
@@ -550,7 +574,7 @@ func TestNoAck(
 	case <-receivedMessage:
 	// ok
 	case <-time.After(defaultTimeout):
-		t.Fatal("timeouted")
+		t.Fatal("timed out")
 	}
 
 	select {
@@ -569,11 +593,13 @@ func TestNoAck(
 		t.Fatal("messages channel should be unblocked after Ack()")
 	}
 
-	select {
-	case <-messages:
-		t.Fatal("msg should be not sent again")
-	case <-time.After(time.Millisecond * 50):
-		// ok
+	if tCtx.Features.ExactlyOnceDelivery {
+		select {
+		case <-messages:
+			t.Fatal("msg should be not sent again")
+		case <-time.After(time.Millisecond * 50):
+			// ok
+		}
 	}
 }
 
@@ -593,7 +619,7 @@ func TestContinueAfterSubscribeClose(
 
 	totalMessagesCount := 5000
 	batches := 5
-	if testing.Short() {
+	if testing.Short() || tCtx.Features.ForceShort {
 		totalMessagesCount = 50
 		batches = 2
 	}
@@ -603,7 +629,7 @@ func TestContinueAfterSubscribeClose(
 	pub, sub := createPubSub(t)
 	defer closePubSub(t, pub, sub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
 	}
@@ -640,7 +666,7 @@ func TestContinueAfterSubscribeClose(
 	}
 
 	// to make this test more robust - let's consume all missing messages
-	// (we care here if we didn't lost any message, not if we received duplicated)
+	// (we care here if we didn't lose any message, not if we received duplicated)
 	missingMessagesCount := totalMessagesCount - len(receivedMessages)
 	if missingMessagesCount > 0 && !tCtx.Features.ExactlyOnceDelivery {
 		messages, err := sub.Subscribe(context.Background(), topicName)
@@ -684,7 +710,7 @@ func TestConcurrentClose(
 		t.Skip("ExactlyOnceDelivery test is not supported yet")
 	}
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	createPub, createSub := createPubSub(t)
 	if subscribeInitializer, ok := createSub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
@@ -734,7 +760,7 @@ func TestContinueAfterErrors(
 	pub, sub := createPubSub(t)
 	defer closePubSub(t, pub, sub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
 	}
@@ -743,7 +769,7 @@ func TestContinueAfterErrors(
 	subscribersToNack := 3
 	nacksPerSubscriber := 100
 
-	if testing.Short() {
+	if testing.Short() || tCtx.Features.ForceShort {
 		subscribersToNack = 1
 		nacksPerSubscriber = 5
 	}
@@ -800,14 +826,14 @@ func TestConsumerGroups(
 	publisherPub, publisherSub := pubSubConstructor(t, "test_"+watermill.NewUUID())
 	defer closePubSub(t, publisherPub, publisherSub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	if subscribeInitializer, ok := publisherSub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
 	}
 	totalMessagesCount := 50
 
-	group1 := generateConsumerGroup(t, pubSubConstructor, topicName)
-	group2 := generateConsumerGroup(t, pubSubConstructor, topicName)
+	group1 := generateConsumerGroup(t, pubSubConstructor, topicName, tCtx)
+	group2 := generateConsumerGroup(t, pubSubConstructor, topicName, tCtx)
 
 	messagesToPublish := PublishSimpleMessages(t, totalMessagesCount, publisherPub, topicName)
 
@@ -824,13 +850,13 @@ func TestPublisherClose(
 	pub, sub := pubSubConstructor(t)
 	defer closePubSub(t, pub, sub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
 	}
 
 	messagesCount := 10000
-	if testing.Short() {
+	if testing.Short() || tCtx.Features.ForceShort {
 		messagesCount = 100
 	}
 
@@ -852,8 +878,8 @@ func TestTopic(
 	pub, sub := pubSubConstructor(t)
 	defer closePubSub(t, pub, sub)
 
-	topic1 := testTopicName(tCtx.TestID) + "_1"
-	topic2 := testTopicName(tCtx.TestID) + "_2"
+	topic1 := testTopicName(tCtx) + "-1"
+	topic2 := testTopicName(tCtx) + "-2"
 
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topic1))
@@ -862,8 +888,8 @@ func TestTopic(
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topic2))
 	}
 
-	topic1Msg := message.NewMessage(watermill.NewUUID(), nil)
-	topic2Msg := message.NewMessage(watermill.NewUUID(), nil)
+	topic1Msg := message.NewMessage(watermill.NewUUID(), []byte("x"))
+	topic2Msg := message.NewMessage(watermill.NewUUID(), []byte("x"))
 
 	require.NoError(t, publishWithRetry(pub, topic1, topic1Msg))
 	require.NoError(t, publishWithRetry(pub, topic2, topic2Msg))
@@ -890,53 +916,35 @@ func TestMessageCtx(
 	tCtx TestContext,
 	pubSubConstructor PubSubConstructor,
 ) {
-	if tCtx.Features.ExactlyOnceDelivery {
-		// with ExactlyOnce delivery (at least as implemented by NATS jetstream)
-		// the second message will never be received because the broker deduplicates
-		// by message ID.
-		t.Skip("ExactlyOnceDelivery test is not supported yet")
-	}
-
 	pub, sub := pubSubConstructor(t)
 	defer closePubSub(t, pub, sub)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
 	}
 
-	msg := message.NewMessage(watermill.NewUUID(), nil)
-
-	// ensuring that context is not propagated via pub/sub
-	ctx, ctxCancel := context.WithCancel(context.Background())
-	ctxCancel()
-	msg.SetContext(ctx)
-
-	require.NoError(t, publishWithRetry(pub, topicName, msg))
-	// this might actually be an error in some pubsubs (http), because we close the subscriber without ACK.
-	_ = pub.Publish(topicName, msg)
-
 	messages, err := sub.Subscribe(context.Background(), topicName)
 	require.NoError(t, err)
 
+	msg1 := message.NewMessage(watermill.NewUUID(), []byte("x"))
+	msg2 := message.NewMessage(watermill.NewUUID(), []byte("x"))
+
+	// this might actually be an error in some pubsubs (http), because we close the subscriber without ACK.
+	_ = pub.Publish(topicName, msg1)
+	_ = pub.Publish(topicName, msg2)
+
 	select {
 	case msg := <-messages:
-		ctx := msg.Context()
-
-		select {
-		case <-ctx.Done():
-			t.Fatal("context should not be canceled")
-		default:
-			// ok
-		}
-
 		require.True(t, msg.Ack())
 
-		select {
-		case <-ctx.Done():
-			// ok
-		case <-time.After(defaultTimeout):
-			t.Fatal("context should be canceled after Ack")
+		if !tCtx.Features.ContextPreserved {
+			select {
+			case <-msg.Context().Done():
+				// ok
+			case <-time.After(defaultTimeout):
+				t.Fatal("context should be canceled after Ack")
+			}
 		}
 	case <-time.After(defaultTimeout):
 		t.Fatal("no message received")
@@ -944,27 +952,22 @@ func TestMessageCtx(
 
 	select {
 	case msg := <-messages:
-		ctx := msg.Context()
-
-		select {
-		case <-ctx.Done():
-			t.Fatal("context should not be canceled")
-		default:
-			// ok
-		}
-
 		go closePubSub(t, pub, sub)
 
-		select {
-		case <-ctx.Done():
-			// ok
-		case <-time.After(defaultTimeout):
-			t.Fatal("context should be canceled after pubSub.Close()")
+		if !tCtx.Features.ContextPreserved {
+			select {
+			case <-msg.Context().Done():
+				// ok
+			case <-time.After(defaultTimeout):
+				t.Fatal("context should be canceled after pubSub.Close()")
+			}
 		}
 	case <-time.After(defaultTimeout):
 		t.Fatal("no message received")
 	}
 }
+
+type contextKey string
 
 // TestSubscribeCtx tests if the Subscriber's Context works correctly.
 func TestSubscribeCtx(
@@ -978,13 +981,20 @@ func TestSubscribeCtx(
 	const messagesCount = 20
 
 	ctxWithCancel, cancel := context.WithCancel(context.Background())
-	ctxWithCancel = context.WithValue(ctxWithCancel, "foo", "bar")
+	ctxWithCancel = context.WithValue(ctxWithCancel, contextKey("foo"), "bar")
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
 	}
-	publishedMessages := PublishSimpleMessages(t, messagesCount, pub, topicName)
+
+	var publishedMessages message.Messages
+	var contextKeyString = "abc"
+	if tCtx.Features.ContextPreserved {
+		publishedMessages = PublishSimpleMessagesWithContext(t, messagesCount, contextKeyString, pub, topicName)
+	} else {
+		publishedMessages = PublishSimpleMessages(t, messagesCount, pub, topicName)
+	}
 
 	msgsToCancel, err := sub.Subscribe(ctxWithCancel, topicName)
 	require.NoError(t, err)
@@ -1002,20 +1012,29 @@ ClosedLoop:
 			msg.Nack()
 		case <-timeout:
 			t.Fatal("messages channel is not closed after ", defaultTimeout)
-			t.FailNow()
 		}
 		time.Sleep(time.Millisecond * 100)
 	}
 
-	ctx := context.WithValue(context.Background(), "foo", "bar")
+	ctx := context.WithValue(context.Background(), contextKey("foo"), "bar")
+
+	// For mocking the output of pub-subs where context is preserved vs not preserved
+	expectedContexts := make(map[string]context.Context)
+	for _, msg := range publishedMessages {
+		if tCtx.Features.ContextPreserved {
+			expectedContexts[msg.UUID] = msg.Context()
+		} else {
+			expectedContexts[msg.UUID] = ctx
+		}
+	}
+
 	msgs, err := sub.Subscribe(ctx, topicName)
 	require.NoError(t, err)
 
 	receivedMessages, _ := bulkRead(tCtx, msgs, messagesCount, defaultTimeout)
 	AssertAllMessagesReceived(t, publishedMessages, receivedMessages)
-
-	for _, msg := range receivedMessages {
-		assert.EqualValues(t, "bar", msg.Context().Value("foo"))
+	if tCtx.Features.ContextPreserved {
+		AssertAllMessagesHaveSameContext(t, contextKeyString, expectedContexts, receivedMessages)
 	}
 }
 
@@ -1031,7 +1050,7 @@ func TestReconnect(
 
 	pub, sub := pubSubConstructor(t)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
 	}
@@ -1072,7 +1091,7 @@ func TestReconnect(
 		go func() {
 			for range publishMessage {
 				id := watermill.NewUUID()
-				msg := message.NewMessage(id, nil)
+				msg := message.NewMessage(id, []byte("x"))
 
 				for {
 					fmt.Println("publishing message")
@@ -1117,7 +1136,7 @@ func TestNewSubscriberReceivesOldMessages(
 
 	pub, sub := pubSubConstructor(t)
 
-	topicName := testTopicName(tCtx.TestID)
+	topicName := testTopicName(tCtx)
 	if subscribeInitializer, ok := sub.(message.SubscribeInitializer); ok {
 		require.NoError(t, subscribeInitializer.SubscribeInitialize(topicName))
 	}
@@ -1213,8 +1232,20 @@ func assertConsumerGroupReceivedMessages(
 	AssertAllMessagesReceived(t, expectedMessages, receivedMessages)
 }
 
-func testTopicName(testID TestID) string {
-	return "topic_" + string(testID)
+func testTopicName(tCtx TestContext) string {
+	if tCtx.Features.GenerateTopicFunc != nil {
+		return tCtx.Features.GenerateTopicFunc(tCtx)
+	}
+
+	return "topic-" + string(tCtx.TestID)
+}
+
+func newTestID(tCtx TestContext) TestID {
+	if tCtx.Features.GenerateIDFunc != nil {
+		return tCtx.Features.GenerateIDFunc()
+	}
+
+	return NewTestID()
 }
 
 func closePubSub(t *testing.T, pub message.Publisher, sub message.Subscriber) {
@@ -1225,8 +1256,8 @@ func closePubSub(t *testing.T, pub message.Publisher, sub message.Subscriber) {
 	require.NoError(t, err)
 }
 
-func generateConsumerGroup(t *testing.T, pubSubConstructor ConsumerGroupPubSubConstructor, topicName string) string {
-	groupName := "cg_" + watermill.NewUUID()
+func generateConsumerGroup(t *testing.T, pubSubConstructor ConsumerGroupPubSubConstructor, topicName string, tCtx TestContext) string {
+	groupName := "cg_" + newTestID(tCtx).String()
 
 	// create a pubsub to ensure that the consumer group exists
 	// for those providers that require subscription before publishing messages (e.g. Google Cloud PubSub)
@@ -1248,7 +1279,25 @@ func PublishSimpleMessages(t *testing.T, messagesCount int, publisher message.Pu
 	for i := 0; i < messagesCount; i++ {
 		id := watermill.NewUUID()
 
+		msg := message.NewMessage(id, []byte("x"))
+		messagesToPublish = append(messagesToPublish, msg)
+
+		err := publishWithRetry(publisher, topicName, msg)
+		require.NoError(t, err, "cannot publish messages")
+	}
+
+	return messagesToPublish
+}
+
+// PublishSimpleMessagesWithContext publishes provided number of simple messages without a payload, but custom context
+func PublishSimpleMessagesWithContext(t *testing.T, messagesCount int, contextKeyString string, publisher message.Publisher, topicName string) message.Messages {
+	var messagesToPublish []*message.Message
+
+	for i := 0; i < messagesCount; i++ {
+		id := watermill.NewUUID()
+
 		msg := message.NewMessage(id, nil)
+		msg.SetContext(context.WithValue(context.Background(), contextKey(contextKeyString), "bar"+strconv.Itoa(i)))
 		messagesToPublish = append(messagesToPublish, msg)
 
 		err := publishWithRetry(publisher, topicName, msg)
@@ -1270,7 +1319,7 @@ func AddSimpleMessagesParallel(t *testing.T, messagesCount int, publisher messag
 	for i := 0; i < publishers; i++ {
 		go func() {
 			for msg := range publishMsg {
-				err := publishWithRetry(publisher, topicName, msg)
+				err := publishWithRetry(publisher, topicName, msg.Copy())
 				require.NoError(t, err, "cannot publish messages")
 				wg.Done()
 			}
@@ -1280,7 +1329,7 @@ func AddSimpleMessagesParallel(t *testing.T, messagesCount int, publisher messag
 	for i := 0; i < messagesCount; i++ {
 		id := watermill.NewUUID()
 
-		msg := message.NewMessage(id, nil)
+		msg := message.NewMessage(id, []byte("x"))
 		messagesToPublish = append(messagesToPublish, msg)
 
 		publishMsg <- msg

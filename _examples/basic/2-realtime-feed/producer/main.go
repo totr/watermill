@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/brianvoe/gofakeit"
+	"github.com/brianvoe/gofakeit/v6"
 
 	"github.com/ThreeDotsLabs/watermill"
-	"github.com/ThreeDotsLabs/watermill-kafka/v2/pkg/kafka"
+	"github.com/ThreeDotsLabs/watermill-kafka/v3/pkg/kafka"
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/ThreeDotsLabs/watermill/message/router/middleware"
 )
@@ -27,8 +27,6 @@ var (
 func main() {
 	logger := watermill.NewStdLogger(false, false)
 	logger.Info("Starting the producer", watermill.LogFields{})
-
-	rand.Seed(time.Now().Unix())
 
 	publisher, err := kafka.NewPublisher(
 		kafka.PublisherConfig{

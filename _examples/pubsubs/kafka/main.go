@@ -1,4 +1,4 @@
-// Sources for https://watermill.io/docs/getting-started/
+// Sources for https://watermill.io/learn/getting-started/
 package main
 
 import (
@@ -6,10 +6,10 @@ import (
 	"log"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 
 	"github.com/ThreeDotsLabs/watermill"
-	"github.com/ThreeDotsLabs/watermill-kafka/v2/pkg/kafka"
+	"github.com/ThreeDotsLabs/watermill-kafka/v3/pkg/kafka"
 	"github.com/ThreeDotsLabs/watermill/message"
 )
 

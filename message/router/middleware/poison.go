@@ -1,15 +1,16 @@
 package middleware
 
 import (
+	stdErrors "errors"
+
 	"github.com/ThreeDotsLabs/watermill/message"
-	multierror "github.com/hashicorp/go-multierror"
 	"github.com/pkg/errors"
 )
 
 // ErrInvalidPoisonQueueTopic occurs when the topic supplied to the PoisonQueue constructor is invalid.
 var ErrInvalidPoisonQueueTopic = errors.New("invalid poison queue topic")
 
-// Metadata keys which marks the reason and context why the message was deemed poisoned.
+// Metadata keys that mark the reason and context for why the message was deemed poisoned.
 const (
 	ReasonForPoisonedKey  = "reason_poisoned"
 	PoisonedTopicKey      = "topic_poisoned"
@@ -24,7 +25,7 @@ type poisonQueue struct {
 	shouldGoToPoisonQueue func(err error) bool
 }
 
-// PoisonQueue provides a middleware that salvages unprocessable messages and published them on a separate topic.
+// PoisonQueue provides a middleware that salvages unprocessable messages and publishes them on a separate topic.
 // The main middleware chain then continues on, business as usual.
 func PoisonQueue(pub message.Publisher, topic string) (message.HandlerMiddleware, error) {
 	if topic == "" {
@@ -86,7 +87,7 @@ func (pq poisonQueue) Middleware(h message.HandlerFunc) message.HandlerFunc {
 				publishErr := pq.publishPoisonMessage(msg, err)
 				if publishErr != nil {
 					publishErr = errors.Wrap(publishErr, "cannot publish message to poison queue")
-					err = multierror.Append(err, publishErr)
+					err = stdErrors.Join(err, publishErr)
 					return
 				}
 

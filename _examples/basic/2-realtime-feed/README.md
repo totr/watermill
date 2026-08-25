@@ -8,7 +8,7 @@ displays each post on the standard output.
 
 The consumer has a throttling middleware enabled, so you have a chance to actually read the posts.
 
-To understand the background and internals, see [getting started guide](https://watermill.io/docs/getting-started/).
+To understand the background and internals, see [getting started guide](https://watermill.io/learn/getting-started/).
 
 ## Requirements
 
@@ -27,7 +27,7 @@ You should see the live feed of posts on the standard output.
 1. Peek into the posts counter published on `posts_count` topic.
 
 ```
-docker-compose exec kafka kafka-console-consumer --bootstrap-server localhost:9092 --topic posts_count
+docker-compose exec consumer mill kafka consume -b kafka:9092 -t posts_count
 ```
 
 2. Add a persistent storage for incoming posts in the consumer service, instead of displaying them.

@@ -1,14 +1,15 @@
 # Watermill
-<img align="right" width="200" src="https://threedots.tech/watermill-io/watermill-logo.png">
+<img align="right" width="300" src="https://watermill.io/img/gopher.svg">
 
-[![CircleCI](https://circleci.com/gh/ThreeDotsLabs/watermill/tree/master.svg?style=svg)](https://circleci.com/gh/ThreeDotsLabs/watermill/tree/master)
+[![CI Status](https://github.com/ThreeDotsLabs/watermill/actions/workflows/master.yml/badge.svg)](https://github.com/ThreeDotsLabs/watermill/actions/workflows/master.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/ThreeDotsLabs/watermill.svg)](https://pkg.go.dev/github.com/ThreeDotsLabs/watermill)
 [![Go Report Card](https://goreportcard.com/badge/github.com/ThreeDotsLabs/watermill)](https://goreportcard.com/report/github.com/ThreeDotsLabs/watermill)
 [![codecov](https://codecov.io/gh/ThreeDotsLabs/watermill/branch/master/graph/badge.svg)](https://codecov.io/gh/ThreeDotsLabs/watermill)
 
 Watermill is a Go library for working efficiently with message streams. It is intended
 for building event driven applications, enabling event sourcing, RPC over messages,
 sagas and basically whatever else comes to your mind. You can use conventional pub/sub
-implementations like Kafka or RabbitMQ, but also HTTP or MySQL binlog if that fits your use case.
+implementations like Kafka or RabbitMQ, but also HTTP or PostgreSQL if that fits your use case.
 
 ## Goals
 
@@ -22,9 +23,23 @@ implementations like Kafka or RabbitMQ, but also HTTP or MySQL binlog if that fi
 
 Pick what you like the best or see in order:
 
-1. Follow the [Getting Started guide](https://watermill.io/docs/getting-started/).
-2. See examples below.
-3. Read the full documentation: https://watermill.io/
+1. [Quickstart](https://watermill.io/learn/quickstart/) — learn by coding!
+2. Follow the [Getting Started guide](https://watermill.io/learn/getting-started/).
+3. See examples below.
+4. Read the full documentation: https://watermill.io/
+
+## Our online hands-on training
+
+Go Event-Driven goes beyond Watermill Quickstart. You'll learn industry standard concepts and patterns like:
+
+* Handling at-least-once delivery
+* Asynchronous read models
+* Events & Commands
+* Observability
+* Message ordering
+* Sagas
+
+<a href="https://threedots.tech/event-driven/?utm_source=watermill-readme"><img align="center" width="400" src="https://threedots.tech/event-driven-banner.png"></a>
 
 ## Examples
 
@@ -35,7 +50,7 @@ Pick what you like the best or see in order:
     * [Metrics](_examples/basic/4-metrics)
     * [CQRS with protobuf](_examples/basic/5-cqrs-protobuf)
 * [Pub/Subs usage](_examples/pubsubs)
-    * These examples are part of the [Getting started guide](https://watermill.io/docs/getting-started/) and show usage of a single Pub/Sub at a time.
+    * These examples are part of the [Getting started guide](https://watermill.io/learn/getting-started/) and show usage of a single Pub/Sub at a time.
 * Real-world examples
     * [Exactly-once delivery counter](_examples/real-world-examples/exactly-once-delivery-counter)
     * [Receiving webhooks](_examples/real-world-examples/receiving-webhooks)
@@ -44,6 +59,7 @@ Pick what you like the best or see in order:
     * [Persistent Event Log](_examples/real-world-examples/persistent-event-log)
     * [Transactional Events](_examples/real-world-examples/transactional-events)
     * [Real-time HTTP updates with Server-Sent Events](_examples/real-world-examples/server-sent-events)
+    * [Real-time HTTP updates with Server-Sent Events and htmx](_examples/real-world-examples/server-sent-events-htmx)
 * Complete projects
     * [NATS example with live code reloading](https://github.com/ThreeDotsLabs/nats-example)
     * [RabbitMQ, webhooks and Kafka integration](https://github.com/ThreeDotsLabs/event-driven-example)
@@ -87,18 +103,26 @@ type Subscriber interface {
 
 Supported Pub/Subs:
 
-- AMQP Pub/Sub [(`github.com/ThreeDotsLabs/watermill-amqp/v2`)](https://github.com/ThreeDotsLabs/watermill-amqp/)
+- AMQP (RabbitMQ) Pub/Sub [(`github.com/ThreeDotsLabs/watermill-amqp/v3`)](https://github.com/ThreeDotsLabs/watermill-amqp/)
+- AWS SNS/SQS Pub/Sub [(`github.com/ThreeDotsLabs/watermill-aws`)](https://github.com/ThreeDotsLabs/watermill-aws/)
 - Bolt Pub/Sub [(`github.com/ThreeDotsLabs/watermill-bolt`)](https://github.com/ThreeDotsLabs/watermill-bolt/)
 - Firestore Pub/Sub [(`github.com/ThreeDotsLabs/watermill-firestore`)](https://github.com/ThreeDotsLabs/watermill-firestore/)
-- Google Cloud Pub/Sub [(`github.com/ThreeDotsLabs/watermill-googlecloud`)](https://github.com/ThreeDotsLabs/watermill-googlecloud/)
-- HTTP Pub/Sub [(`github.com/ThreeDotsLabs/watermill-http`)](https://github.com/ThreeDotsLabs/watermill-http/)
+- Google Cloud Pub/Sub [(`github.com/ThreeDotsLabs/watermill-googlecloud/v2`)](https://github.com/ThreeDotsLabs/watermill-googlecloud/)
+- HTTP Pub/Sub [(`github.com/ThreeDotsLabs/watermill-http/v2`)](https://github.com/ThreeDotsLabs/watermill-http/)
 - io.Reader/io.Writer Pub/Sub [(`github.com/ThreeDotsLabs/watermill-io`)](https://github.com/ThreeDotsLabs/watermill-io/)
-- Kafka Pub/Sub [(`github.com/ThreeDotsLabs/watermill-kafka/v2`)](https://github.com/ThreeDotsLabs/watermill-kafka/)
-- NATS Pub/Sub [(`github.com/ThreeDotsLabs/watermill-nats`)](https://github.com/ThreeDotsLabs/watermill-nats/)
-- SQL Pub/Sub [(`github.com/ThreeDotsLabs/watermill-sql`)](https://github.com/ThreeDotsLabs/watermill-sql/)
-
+- Kafka Pub/Sub [(`github.com/ThreeDotsLabs/watermill-kafka/v3`)](https://github.com/ThreeDotsLabs/watermill-kafka/)
+- NATS Jetstream Pub/Sub [(`github.com/ThreeDotsLabs/watermill-nats/v2`)](https://github.com/ThreeDotsLabs/watermill-nats/)
+- Redis Stream Pub/Sub [(`github.com/ThreeDotsLabs/watermill-redisstream`)](https://github.com/ThreeDotsLabs/watermill-redisstream/)
+- SQL (MySQL / PostgreSQL) Pub/Sub [(`github.com/ThreeDotsLabs/watermill-sql/v4`)](https://github.com/ThreeDotsLabs/watermill-sql/)
+- SQLite Pub/Sub (Beta) [(`github.com/ThreeDotsLabs/watermill-sqlite/`)](https://github.com/ThreeDotsLabs/watermill-sqlite/)
 
 All Pub/Subs implementation documentation can be found in the [documentation](https://watermill.io/pubsubs/).
+
+## Unofficial libraries
+
+Can't find your favorite Pub/Sub or library integration? Check [Awesome Watermill](https://watermill.io/docs/awesome/).
+
+If you know another library or are an author of one, please [add it to the list](https://github.com/ThreeDotsLabs/watermill/edit/master/docs/content/docs/awesome.md).
 
 ## Contributing
 
@@ -126,24 +150,22 @@ Keep in mind that the results can be vastly different, depending on the setup an
 
 Here's the short version for message size of 16 bytes.
 
-| Pub/Sub              | Publish (messages / s) | Subscribe (messages / s) |
-| -------------------- | ---------------------- | ------------------------ |
-| Kafka (one node)     | 63,506                 | 110,811                  |
-| Kafka (5 nodes)      | 70,252                 | 117,529                  |
-| NATS                 | 76,208                 | 38,169                   |
-| SQL (MySQL)          | 7,299                  | 154                      |
-| SQL (PostgreSQL)     | 4,142                  | 98                       |
-| Google Cloud Pub/Sub | 7,416                  | 39,591                   |
-| AMQP                 | 2,408                  | 10,608                   |
-| GoChannel            | 272,938                | 101,371                  |
+| Pub/Sub                         | Publish (messages / s) | Subscribe (messages / s) |
+|---------------------------------|------------------------|--------------------------|
+| GoChannel                       | 315,776                | 138,743                  |
+| Redis Streams                   | 59,158                 | 12,134                   |
+| NATS Jetstream (16 Subscribers) | 50,668                 | 34,713                   |
+| Kafka (one node)                | 41,492                 | 101,669                  |
+| SQL (MySQL, batch size=100)     | 6,371                  | 2,794                    |
+| SQL (PostgreSQL, batch size=1)  | 2,831                  | 9,460                    |
+| Google Cloud Pub/Sub            | 3,027                  | 28,589                   |
+| AMQP (RabbitMQ)                 | 2,770                  | 14,604                   |
 
 ## Support
 
 If you didn't find the answer to your question in [the documentation](https://watermill.io/), feel free to ask us directly!
 
 Please join us on the `#watermill` channel on the [Three Dots Labs Discord](https://discord.gg/QV6VFg4YQE).
-
-Every bit of feedback is very welcome and appreciated. Please submit it using [the survey](https://www.surveymonkey.com/r/WZXD392).
 
 ## Why the name?
 

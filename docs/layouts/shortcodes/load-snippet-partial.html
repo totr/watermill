@@ -67,9 +67,43 @@
     {{ end }}
 {{ end }}
 
-<small class="smaller">Full source: [github.com/ThreeDotsLabs/{{ $repo }}/{{ $linkFile }}](https://github.com/ThreeDotsLabs/{{ $repo }}/tree/master/{{ $linkFile }}{{ if ne $first_line_num 0 }}#L{{ $first_line_num }}{{ end }})</small>
+{{/* Calculate minimum indentation (common whitespace) */}}
+{{ $min_indent := 999999 }}
+{{ range $lines }}
+    {{ if and (ne . "// ...") (ne (trim . " \t") "") }}
+        {{ $leading := 0 }}
+        {{ range $i, $char := split . "" }}
+            {{ if or (eq $char " ") (eq $char "\t") }}
+                {{ $leading = add $leading 1 }}
+            {{ else }}
+                {{ break }}
+            {{ end }}
+        {{ end }}
+        {{ if lt $leading $min_indent }}
+            {{ $min_indent = $leading }}
+        {{ end }}
+    {{ end }}
+{{ end }}
 
-{{ highlight (delimit $lines "\n") (.Get "type" | default "go") "" }}
+{{/* Remove common leading whitespace from all lines */}}
+{{ $normalized_lines := slice }}
+{{ range $lines }}
+    {{ if or (eq . "// ...") (eq (trim . " \t") "") }}
+        {{ $normalized_lines = $normalized_lines | append . }}
+    {{ else if gt $min_indent 0 }}
+        {{ $normalized_lines = $normalized_lines | append (substr . $min_indent) }}
+    {{ else }}
+        {{ $normalized_lines = $normalized_lines | append . }}
+    {{ end }}
+{{ end }}
+
+<div class="expressive-code">
+    <figure class="frame not-content">
+        {{ transform.Highlight (delimit $normalized_lines "\n" | safeHTML) (.Get "type" | default "go") }}
+    </figure>
+</div>
+
+<small class="smaller">Full source: [github.com/ThreeDotsLabs/{{ $repo }}/{{ $linkFile }}](https://github.com/ThreeDotsLabs/{{ $repo }}/tree/master/{{ $linkFile }}{{ if ne $first_line_num 0 }}#L{{ $first_line_num }}{{ end }})</small>
 
 {{if not $first_line_found }}
     {{ errorf "`first_line_contains` %s not found in %s snippet" $first_line_contains $file }}

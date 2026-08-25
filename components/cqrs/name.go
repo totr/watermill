@@ -5,7 +5,14 @@ import (
 	"strings"
 )
 
-// FullyQualifiedStructName name returns object name in format [package].[type name].
+// FullyQualifiedStructName returns object name in format [package].[type name].
+// For example, for the struct:
+//
+//	package events
+//	type UserCreated struct {}
+//
+// it will return "events.UserCreated".
+//
 // It ignores if the value is a pointer or not.
 func FullyQualifiedStructName(v interface{}) string {
 	s := fmt.Sprintf("%T", v)
@@ -14,7 +21,14 @@ func FullyQualifiedStructName(v interface{}) string {
 	return s
 }
 
-// StructName name returns struct name in format [type name].
+// StructName returns struct name in format [type name].
+// For example, for the struct:
+//
+//	package events
+//	type UserCreated struct {}
+//
+// it will return "UserCreated".
+//
 // It ignores if the value is a pointer or not.
 func StructName(v interface{}) string {
 	segments := strings.Split(fmt.Sprintf("%T", v), ".")
@@ -27,9 +41,11 @@ type namedStruct interface {
 }
 
 // NamedStruct returns the name from a message implementing the following interface:
-// 		type namedStruct interface {
-// 			Name() string
-// 		}
+//
+//	type namedStruct interface {
+//		Name() string
+//	}
+//
 // It ignores if the value is a pointer or not.
 func NamedStruct(fallback func(v interface{}) string) func(v interface{}) string {
 	return func(v interface{}) string {

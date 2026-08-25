@@ -17,8 +17,13 @@ type Payload []byte
 
 // Message is the basic transfer unit.
 // Messages are emitted by Publishers and received by Subscribers.
+//
+// A publisher can modify the message during publishing, e.g. can alter the metadata.
+// Avoid modifying the message in parallel with publishing, as it can lead to data races.
+// In general, a message should be passed to a single Publish and then considered immutable.
+// If needed, use the Copy method to create a new message.
 type Message struct {
-	// UUID is an unique identifier of message.
+	// UUID is a unique identifier of the message.
 	//
 	// It is only used by Watermill for debugging.
 	// UUID can be empty.
@@ -26,7 +31,7 @@ type Message struct {
 
 	// Metadata contains the message metadata.
 	//
-	// Can be used to store data which doesn't require unmarshaling the entire payload.
+	// Can be used to store data which doesn't require unmarshalling the entire payload.
 	// It is something similar to HTTP request's headers.
 	//
 	// Metadata is marshaled and will be saved to the PubSub.
@@ -35,9 +40,9 @@ type Message struct {
 	// Payload is the message's payload.
 	Payload Payload
 
-	// ack is closed, when acknowledge is received.
+	// ack is closed when acknowledge is received.
 	ack chan struct{}
-	// noACk is closed, when negative acknowledge is received.
+	// noAck is closed when negative acknowledge is received.
 	noAck chan struct{}
 
 	ackMutex    sync.Mutex
@@ -55,6 +60,13 @@ func NewMessage(uuid string, payload Payload) *Message {
 		ack:      make(chan struct{}),
 		noAck:    make(chan struct{}),
 	}
+}
+
+// NewMessageWithContext creates a new Message with given uuid, payload, and context.
+func NewMessageWithContext(ctx context.Context, uuid string, payload Payload) *Message {
+	msg := NewMessage(uuid, payload)
+	msg.SetContext(ctx)
+	return msg
 }
 
 type ackType int
@@ -137,12 +149,13 @@ func (m *Message) Nack() bool {
 // Acked returns channel which is closed when acknowledgement is sent.
 //
 // Usage:
-// 		select {
-//		case <-message.Acked():
-// 			// ack received
-//		case <-message.Nacked():
-//			// nack received
-//		}
+//
+//	select {
+//	case <-message.Acked():
+//		// ack received
+//	case <-message.Nacked():
+//		// nack received
+//	}
 func (m *Message) Acked() <-chan struct{} {
 	return m.ack
 }
@@ -150,12 +163,13 @@ func (m *Message) Acked() <-chan struct{} {
 // Nacked returns channel which is closed when negative acknowledgement is sent.
 //
 // Usage:
-// 		select {
-//		case <-message.Acked():
-// 			// ack received
-//		case <-message.Nacked():
-//			// nack received
-//		}
+//
+//	select {
+//	case <-message.Acked():
+//		// ack received
+//	case <-message.Nacked():
+//		// nack received
+//	}
 func (m *Message) Nacked() <-chan struct{} {
 	return m.noAck
 }
@@ -184,5 +198,13 @@ func (m *Message) Copy() *Message {
 	for k, v := range m.Metadata {
 		msg.Metadata.Set(k, v)
 	}
+	return msg
+}
+
+// CopyWithContext copies all message without Acks/Nacks.
+// The context is also propagated to the copy.
+func (m *Message) CopyWithContext() *Message {
+	msg := m.Copy()
+	msg.ctx = m.ctx
 	return msg
 }

@@ -3,15 +3,6 @@ set -e -x
 
 cd "$(dirname "$0")"
 
-if [[ ! -d themes/kube ]]; then
-    mkdir -p themes/kube && pushd themes/kube
-    git init
-    git remote add origin https://github.com/jeblister/kube
-    git fetch --depth 1 origin bda578df413e441fb24e4f5f751d2b15b7efb53a
-    git checkout FETCH_HEAD
-    popd
-fi
-
 function cloneOrPull() {
     if [[ -d "$2" ]]
     then
@@ -19,17 +10,17 @@ function cloneOrPull() {
         git pull
         popd
     else
-        git clone --single-branch --branch master $1 $2
+        git clone --single-branch $1 $2
     fi
 }
 
 if [[ "$1" == "--copy" ]]; then
-    rm content/src-link -r || true
+    rm -rf content/src-link || true
     mkdir content/src-link/
-    cp ../message/ content/src-link/ -r
-    cp ../pubsub/ content/src-link/ -r
-    cp ../_examples/ content/src-link/ -r
-    cp ../components/ content/src-link/ -r
+    cp -r ../message content/src-link/
+    cp -r ../pubsub content/src-link/
+    cp -r ../_examples content/src-link/
+    cp -r ../components content/src-link/
 else
     declare -a files_to_link=(
         "_examples"
@@ -40,17 +31,30 @@ else
         "message/router.go"
         "message/router_context.go"
         "pubsub/gochannel/pubsub.go"
+        "pubsub/gochannel/fanout.go"
 
         "components/cqrs/command_bus.go"
         "components/cqrs/command_processor.go"
+        "components/cqrs/command_handler.go"
+
         "components/cqrs/event_bus.go"
         "components/cqrs/event_processor.go"
+        "components/cqrs/event_processor_group.go"
+        "components/cqrs/event_handler.go"
+
         "components/cqrs/marshaler.go"
         "components/cqrs/cqrs.go"
         "components/cqrs/marshaler.go"
 
+        "components/delay/delay.go"
+        "components/delay/publisher.go"
+
+        "components/requeuer/requeuer.go"
+
         "components/metrics/builder.go"
         "components/metrics/http.go"
+
+        "components/fanin/fanin.go"
     )
 
     pushd ../
@@ -74,7 +78,12 @@ cloneOrPull "https://github.com/ThreeDotsLabs/watermill-nats.git" content/src-li
 cloneOrPull "https://github.com/ThreeDotsLabs/watermill-sql.git" content/src-link/watermill-sql
 cloneOrPull "https://github.com/ThreeDotsLabs/watermill-firestore.git" content/src-link/watermill-firestore
 cloneOrPull "https://github.com/ThreeDotsLabs/watermill-bolt.git" content/src-link/watermill-bolt
+cloneOrPull "https://github.com/ThreeDotsLabs/watermill-redisstream.git" content/src-link/watermill-redisstream
+cloneOrPull "https://github.com/ThreeDotsLabs/watermill-aws.git" content/src-link/watermill-aws
+cloneOrPull "https://github.com/ThreeDotsLabs/watermill-sqlite.git" content/src-link/watermill-sqlite
 
+find content/src-link -name '*.md' -delete
+find content/src-link -name '*.html' -delete
 
 python3 ./extract_middleware_godocs.py > content/src-link/middleware-defs.md
 

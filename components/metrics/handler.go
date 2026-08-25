@@ -15,9 +15,9 @@ var (
 		labelSuccess,
 	}
 
-	// handlerExecutionTimeBuckets are one order of magnitude smaller than default buckets (5ms~10s),
+	// defaultHandlerExecutionTimeBuckets are one order of magnitude smaller than default buckets (5ms~10s),
 	// because the handler execution times are typically shorter (µs~ms range).
-	handlerExecutionTimeBuckets = []float64{
+	defaultHandlerExecutionTimeBuckets = []float64{
 		0.0005,
 		0.001,
 		0.0025,
@@ -35,6 +35,7 @@ var (
 // HandlerPrometheusMetricsMiddleware is a middleware that captures Prometheus metrics.
 type HandlerPrometheusMetricsMiddleware struct {
 	handlerExecutionTimeSeconds *prometheus.HistogramVec
+	additionalLabels            []MetricLabel
 }
 
 // Middleware returns the middleware ready to be used with watermill's Router.
@@ -44,6 +45,9 @@ func (m HandlerPrometheusMetricsMiddleware) Middleware(h message.HandlerFunc) me
 		ctx := msg.Context()
 		labels := prometheus.Labels{
 			labelKeyHandlerName: message.HandlerNameFromCtx(ctx),
+		}
+		for _, lb := range m.additionalLabels {
+			labels[lb.Label] = lb.ComputeValueFn(ctx)
 		}
 
 		defer func() {
@@ -62,7 +66,13 @@ func (m HandlerPrometheusMetricsMiddleware) Middleware(h message.HandlerFunc) me
 // NewRouterMiddleware returns new middleware.
 func (b PrometheusMetricsBuilder) NewRouterMiddleware() HandlerPrometheusMetricsMiddleware {
 	var err error
-	m := HandlerPrometheusMetricsMiddleware{}
+	m := HandlerPrometheusMetricsMiddleware{
+		additionalLabels: b.additionalLabels,
+	}
+
+	if b.HandlerBuckets == nil {
+		b.HandlerBuckets = defaultHandlerExecutionTimeBuckets
+	}
 
 	m.handlerExecutionTimeSeconds, err = b.registerHistogramVec(prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -70,9 +80,9 @@ func (b PrometheusMetricsBuilder) NewRouterMiddleware() HandlerPrometheusMetrics
 			Subsystem: b.Subsystem,
 			Name:      "handler_execution_time_seconds",
 			Help:      "The total time elapsed while executing the handler function in seconds",
-			Buckets:   handlerExecutionTimeBuckets,
+			Buckets:   b.HandlerBuckets,
 		},
-		handlerLabelKeys,
+		toLabelsSlice(handlerLabelKeys, b.additionalLabels),
 	))
 	if err != nil {
 		panic(errors.Wrap(err, "could not register handler execution time metric"))
